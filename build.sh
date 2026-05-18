@@ -1,6 +1,6 @@
 #!/bin/bash
-: "${ARM64_EXPECTED_HASH:=bb7384f57b1c8c98ebd0594436c28a774cf79db37f695ea2a98ee3629374c998}"
-: "${AMD64_EXPECTED_HASH:=212c958edafdbc6cc2aaaee868341dea1f640bb8ae9b2a37f33f558ee542b2ee}"
+: "${ARM64_EXPECTED_HASH:=7d6046e0330d52d5b90b8c1427c18caa060992ed37625027d18513f987f57cee}"
+: "${AMD64_EXPECTED_HASH:=4a7fe5bcc95f29dedbfeeb45bc2c6b916343253ba0e0e392038968f5857c6aa9}"
 : "${BUILT_IN_DOCKER:=0}"
 #!/bin/bash
 set -euo pipefail
@@ -235,6 +235,16 @@ if [ "$INSTALL_NEEDED" = true ]; then
         exit 1
     fi
     echo "✓ Electron and Asar installation command finished."
+    # Some npm versions skip Electron's postinstall (which fetches the prebuilt
+    # binaries into node_modules/electron/dist). Run it explicitly as a fallback.
+    if [ ! -d "$ELECTRON_DIST_PATH" ] && [ -f "node_modules/electron/install.js" ]; then
+        echo "Electron dist/ missing after npm install; running install.js manually..."
+        if ! node node_modules/electron/install.js; then
+            echo "❌ Electron install.js failed to download prebuilt binaries."
+            cd "$PROJECT_ROOT"
+            exit 1
+        fi
+    fi
 else
     echo "✓ Local Electron distribution and Asar binary already present."
 fi
@@ -246,7 +256,8 @@ if [ -d "$ELECTRON_DIST_PATH" ]; then
 else
     echo "❌ Failed to find Electron distribution directory at '$ELECTRON_DIST_PATH' after installation attempt."
     echo "   Cannot proceed without the Electron distribution files."
-    cd "$PROJECT_ROOT"     exit 1
+    cd "$PROJECT_ROOT"
+    exit 1
 fi
 
 if [ -f "$ASAR_BIN_PATH" ]; then
