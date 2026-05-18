@@ -1,6 +1,12 @@
 #!/bin/bash
-: "${ARM64_EXPECTED_HASH:=7d6046e0330d52d5b90b8c1427c18caa060992ed37625027d18513f987f57cee}"
-: "${AMD64_EXPECTED_HASH:=4a7fe5bcc95f29dedbfeeb45bc2c6b916343253ba0e0e392038968f5857c6aa9}"
+: "${ARM64_EXPECTED_HASH:=1feb14e8d9faab135cc3e4f13b76ef0cc6cdf1194ca457b3d9733d25a0b863d7}"
+: "${AMD64_EXPECTED_HASH:=3d39a236267b17ea17e976015ca5f4a66a986a1324bab1d59529d36055b46afc}"
+# Per-release pinned URL. Each Anthropic release lives at a unique path with
+# a git-sha-suffixed filename. To bump: pull the matching values out of
+# aaddrick/claude-desktop-debian -> scripts/setup/detect-host.sh at the
+# desired release tag.
+: "${CLAUDE_VERSION:=1.7196.1}"
+: "${CLAUDE_RELEASE_SHA:=abcd6556f79f4cca317ff02bfe0bedbeeb6e56a9}"
 : "${BUILT_IN_DOCKER:=0}"
 #!/bin/bash
 set -euo pipefail
@@ -14,12 +20,12 @@ cat /etc/os-release && uname -m && dpkg --print-architecture
 
 # Set variables based on detected architecture
 if [ "$HOST_ARCH" = "amd64" ]; then
-    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/Claude-Setup-x64.exe" # Official amd64 URL https://claude.ai/download
+    CLAUDE_DOWNLOAD_URL="https://downloads.claude.ai/releases/win32/x64/${CLAUDE_VERSION}/Claude-${CLAUDE_RELEASE_SHA}.exe"
     ARCHITECTURE="amd64"
     CLAUDE_EXE_FILENAME="Claude-Setup-x64.exe"
     echo "Configured for amd64 build."
 elif [ "$HOST_ARCH" = "arm64" ]; then
-    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-arm64/Claude-Setup-arm64.exe"
+    CLAUDE_DOWNLOAD_URL="https://downloads.claude.ai/releases/win32/arm64/${CLAUDE_VERSION}/Claude-${CLAUDE_RELEASE_SHA}.exe"
     ARCHITECTURE="arm64"
     CLAUDE_EXE_FILENAME="Claude-Setup-arm64.exe"
     echo "Configured for arm64 build."
@@ -356,7 +362,23 @@ cd "$APP_STAGING_DIR"
 "$ASAR_EXEC" extract app.asar app.asar.contents
 
 echo "Creating stub native module..."
-cat > app.asar.contents/node_modules/claude-native/index.js << EOF
+# Locate the claude-native module. In 0.x it was at node_modules/claude-native;
+# in 1.x (post-Apr 2026) it moved to node_modules/@ant/claude-native.
+CLAUDE_NATIVE_DIR=""
+for candidate in \
+    "app.asar.contents/node_modules/@ant/claude-native" \
+    "app.asar.contents/node_modules/claude-native"; do
+    if [ -d "$candidate" ]; then
+        CLAUDE_NATIVE_DIR="$candidate"
+        break
+    fi
+done
+if [ -z "$CLAUDE_NATIVE_DIR" ]; then
+    echo "❌ Could not locate claude-native module in extracted app.asar."
+    exit 1
+fi
+echo "Stubbing native module at $CLAUDE_NATIVE_DIR"
+cat > "$CLAUDE_NATIVE_DIR/index.js" << EOF
 // Stub implementation of claude-native using KeyboardKey enum values
 const KeyboardKey = { Backspace: 43, Tab: 280, Enter: 261, Shift: 272, Control: 61, Alt: 40, CapsLock: 56, Escape: 85, Space: 276, PageUp: 251, PageDown: 250, End: 83, Home: 154, LeftArrow: 175, UpArrow: 282, RightArrow: 262, DownArrow: 81, Delete: 79, Meta: 187 };
 Object.freeze(KeyboardKey);
@@ -413,8 +435,12 @@ echo "##############################################################"
 
 "$ASAR_EXEC" pack app.asar.contents app.asar
 
-mkdir -p "$APP_STAGING_DIR/app.asar.unpacked/node_modules/claude-native"
-cat > "$APP_STAGING_DIR/app.asar.unpacked/node_modules/claude-native/index.js" << EOF
+# Mirror the stub at the same relative path used inside the app.asar (see above).
+# In 1.x this is @ant/claude-native; in 0.x it was claude-native.
+UNPACKED_NATIVE_REL="${CLAUDE_NATIVE_DIR#app.asar.contents/}"
+UNPACKED_NATIVE_DIR="$APP_STAGING_DIR/app.asar.unpacked/$UNPACKED_NATIVE_REL"
+mkdir -p "$UNPACKED_NATIVE_DIR"
+cat > "$UNPACKED_NATIVE_DIR/index.js" << EOF
 // Stub implementation of claude-native using KeyboardKey enum values
 const KeyboardKey = { Backspace: 43, Tab: 280, Enter: 261, Shift: 272, Control: 61, Alt: 40, CapsLock: 56, Escape: 85, Space: 276, PageUp: 251, PageDown: 250, End: 83, Home: 154, LeftArrow: 175, UpArrow: 282, RightArrow: 262, DownArrow: 81, Delete: 79, Meta: 187 };
 Object.freeze(KeyboardKey);
